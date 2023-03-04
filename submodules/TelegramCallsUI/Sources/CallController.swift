@@ -16,6 +16,7 @@ import TooltipUI
 
 protocol CallControllerNodeProtocol: AnyObject {
     var isMuted: Bool { get set }
+    var audioLevel: Float { get set }
     
     var toggleMute: (() -> Void)? { get set }
     var setCurrentAudioOutput: ((AudioSessionOutput) -> Void)? { get set }
@@ -64,7 +65,9 @@ public final class CallController: ViewController {
     private var disposable: Disposable?
     
     private var callMutedDisposable: Disposable?
+    private var audioLevelDisposable: Disposable?
     private var isMuted = false
+    private var audioLevel: Float = 0
     
     private var presentedCallRating = false
     
@@ -105,6 +108,16 @@ public final class CallController: ViewController {
             }
         })
         
+        self.audioLevelDisposable = (call.audioLevel
+        |> deliverOnMainQueue).start(next: { [weak self] value in
+            if let strongSelf = self {
+                strongSelf.audioLevel = value
+                if strongSelf.isNodeLoaded {
+                    strongSelf.controllerNode.audioLevel = value
+                }
+            }
+        })
+        
         self.audioOutputStateDisposable = (call.audioOutputState
         |> deliverOnMainQueue).start(next: { [weak self] state in
             if let strongSelf = self {
@@ -124,6 +137,7 @@ public final class CallController: ViewController {
         self.peerDisposable?.dispose()
         self.disposable?.dispose()
         self.callMutedDisposable?.dispose()
+        self.audioLevelDisposable?.dispose()
         self.audioOutputStateDisposable?.dispose()
         self.idleTimerExtensionDisposable.dispose()
     }

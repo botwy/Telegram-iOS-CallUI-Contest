@@ -17,6 +17,9 @@ import AlertUI
 import PresentationDataUtils
 import DeviceAccess
 import ContextUI
+import GradientBackground
+import AudioBlob
+import AvatarNode
 
 private func interpolateFrame(from fromValue: CGRect, to toValue: CGRect, t: CGFloat) -> CGRect {
     return CGRect(x: floorToScreenPixels(toValue.origin.x * t + fromValue.origin.x * (1.0 - t)), y: floorToScreenPixels(toValue.origin.y * t + fromValue.origin.y * (1.0 - t)), width: floorToScreenPixels(toValue.size.width * t + fromValue.size.width * (1.0 - t)), height: floorToScreenPixels(toValue.size.height * t + fromValue.size.height * (1.0 - t)))
@@ -370,7 +373,83 @@ final class CallControllerNode: ViewControllerTracingNode, CallControllerNodePro
     private let containerNode: ASDisplayNode
     private let videoContainerNode: PinchSourceContainerNode
     
+    private var hasVideo = false
+    
     private let imageNode: TransformImageNode
+    
+    private let gradientNode: GradientBackgroundNode
+    
+    private let startGradientColors = [
+        UIColor(rgb: 0xAC65D4),
+        UIColor(rgb: 0x7261DA),
+        UIColor(rgb: 0x5295D6),
+        UIColor(rgb: 0x616AD5),
+    ]
+    private let successGradientColors = [
+        UIColor(rgb: 0x53A6DE),
+        UIColor(rgb: 0x398D6F),
+        UIColor(rgb: 0xBAC05D),
+        UIColor(rgb: 0x3C9C8F),
+    ]
+    private let weakGradientColors = [
+        UIColor(rgb: 0xC94986),
+        UIColor(rgb: 0xFF7E46),
+        UIColor(rgb: 0xB84498),
+        UIColor(rgb: 0xF4992E),
+    ]
+    
+    private let avatarOffset = 174
+    private let avatarDimension = 136
+    private let blobMultiple = 1.59
+    private lazy var blobDimension = Int(Double(avatarDimension)*blobMultiple)
+    private lazy var blobSize = CGSize(width: blobDimension, height: blobDimension)
+    private let statusOffset = 40
+    
+    private var encryptTooltipNode: EncryptTooltipNode?
+    private var encryptPanelNode: EncryptPanelNode?
+    private var encryptPanelNodeTargetOrigin = CGPoint()
+    
+    private var isEncryptTooltipDidShow = false
+    
+    private lazy var blobContainerNode: ASDisplayNode = {
+        let container = ASDisplayNode()
+        container.frame = CGRect(origin: CGPoint(), size: blobSize)
+        
+        return container
+    }()
+    
+    private lazy var blobNode: VoiceBlobNode = {
+        let smallMin = 1/blobMultiple
+        let blob = VoiceBlobNode(
+            maxLevel: 4,
+            smallBlobRange: (smallMin, smallMin + 0.1),
+            mediumBlobRange: (smallMin + 0.1, 0.9),
+            bigBlobRange: (smallMin + 0.2, 1.00)
+        )
+        blob.frame = CGRect(origin: CGPoint(), size: blobSize)
+        blob.setColor(UIColor(rgb: 0xFFFFFF), mediumAlpha: 0.2, bigAlpha: 0.1)
+        blob.layer.compositingFilter = "overlayBlendMode"
+        blob.startAnimating()
+        
+        return blob
+    }()
+    
+    private lazy var avatarNode: AvatarNode = {
+        let avatarFont = avatarPlaceholderFont(size: floor(CGFloat(avatarDimension) * 16.0 / 37.0))
+        let avatar = AvatarNode(font: avatarFont)
+        let origin = CGPoint(x: blobDimension/2 - avatarDimension/2, y: blobDimension/2 - avatarDimension/2)
+        avatar.frame = CGRect(origin: origin, size: CGSize(width: avatarDimension, height: avatarDimension))
+        
+        return avatar
+    }()
+    
+    private lazy var weakMessageNode: CallSimpleMessageNode = {
+        let message = CallSimpleMessageNode(maxWidth: self.containerNode.bounds.width - 20, title: self.presentationData.strings.Call_Weak_Signal)
+        message.isHidden = true
+        
+        return message
+    }()
+    
     private let dimNode: ASImageNode
     
     private var candidateIncomingVideoNodeValue: CallVideoNode?
@@ -403,7 +482,7 @@ final class CallControllerNode: ViewControllerTracingNode, CallControllerNodePro
     private let statusNode: CallControllerStatusNode
     private let toastNode: CallControllerToastContainerNode
     private let buttonsNode: CallControllerButtonsNode
-    private var keyPreviewNode: CallControllerKeyPreviewNode?
+    private var keyPreviewNode: EncryptKeyPreviewNode?
     
     private var debugNode: CallDebugNode?
     
@@ -422,6 +501,12 @@ final class CallControllerNode: ViewControllerTracingNode, CallControllerNodePro
             if let (layout, navigationBarHeight) = self.validLayout {
                 self.containerLayoutUpdated(layout, navigationBarHeight: navigationBarHeight, transition: .animated(duration: 0.3, curve: .easeInOut))
             }
+        }
+    }
+    
+    var audioLevel: Float = 0 {
+        didSet {
+            self.blobNode.updateLevel(CGFloat(self.audioLevel)*2)
         }
     }
     
@@ -484,6 +569,9 @@ final class CallControllerNode: ViewControllerTracingNode, CallControllerNodePro
         self.videoContainerNode = PinchSourceContainerNode()
         
         self.imageNode = TransformImageNode()
+        
+        self.gradientNode = GradientBackgroundNode(colors: startGradientColors)
+        
         self.imageNode.contentAnimations = [.subsequentUpdates]
         self.dimNode = ASImageNode()
         self.dimNode.contentMode = .scaleToFill
@@ -530,15 +618,21 @@ final class CallControllerNode: ViewControllerTracingNode, CallControllerNodePro
             }
         }
         
-        self.containerNode.addSubnode(self.imageNode)
+        self.containerNode.addSubnode(self.gradientNode)
         self.containerNode.addSubnode(self.videoContainerNode)
-        self.containerNode.addSubnode(self.dimNode)
         self.containerNode.addSubnode(self.statusNode)
         self.containerNode.addSubnode(self.buttonsNode)
         self.containerNode.addSubnode(self.toastNode)
         self.containerNode.addSubnode(self.keyButtonNode)
         self.containerNode.addSubnode(self.backButtonArrowNode)
         self.containerNode.addSubnode(self.backButtonNode)
+        self.containerNode.addSubnode(self.weakMessageNode)
+        self.containerNode.addSubnode(self.blobContainerNode)
+        self.blobContainerNode.addSubnode(self.blobNode)
+        self.blobContainerNode.addSubnode(self.avatarNode)
+        
+        self.backButtonNode.isHidden = true
+        self.backButtonArrowNode.isHidden = true
         
         self.buttonsNode.mute = { [weak self] in
             self?.toggleMute?()
@@ -761,13 +855,15 @@ final class CallControllerNode: ViewControllerTracingNode, CallControllerNodePro
             return
         }
                 
-        self.present?(TooltipScreen(account: self.account, text: self.presentationData.strings.Call_CameraOrScreenTooltip, style: .light, icon: nil, location: .point(location.offsetBy(dx: 0.0, dy: -14.0), .bottom), displayDuration: .custom(5.0), shouldDismissOnTouch: { _ in
+        self.present?(TooltipScreen(account: self.account, text: self.presentationData.strings.Call_CameraOrScreenTooltip, style: .overlayBlendMode, icon: nil, location: .point(location.offsetBy(dx: 0.0, dy: -14.0), .bottom), displayDuration: .custom(5.0), shouldDismissOnTouch: { _ in
             return .dismiss(consume: false)
         }))
     }
     
     override func didLoad() {
         super.didLoad()
+        
+        self.isEncryptTooltipDidShow = UserDefaults.standard.bool(forKey: "TG_callEncryptTooltip_didShow")
         
         let panRecognizer = CallPanGestureRecognizer(target: self, action: #selector(self.panGesture(_:)))
         panRecognizer.shouldBegin = { [weak self] _ in
@@ -783,19 +879,30 @@ final class CallControllerNode: ViewControllerTracingNode, CallControllerNodePro
         
         let tapRecognizer = UITapGestureRecognizer(target: self, action: #selector(self.tapGesture(_:)))
         self.view.addGestureRecognizer(tapRecognizer)
+        
+        Queue.mainQueue().after(0.01, { [weak self] in
+            self?.addBlobAnimation()
+            self?.gradientNode.startLoopingAnimation()
+        })
+    }
+    
+    private func addBlobAnimation() {
+        let pulseAnimation = CABasicAnimation(keyPath: "transform.scale")
+        pulseAnimation.duration = 1.5
+        pulseAnimation.fromValue = 1.0
+        pulseAnimation.toValue = 1.1
+        pulseAnimation.timingFunction = CAMediaTimingFunction(name: .linear)
+        pulseAnimation.autoreverses = true
+        pulseAnimation.repeatCount = .infinity
+        self.blobContainerNode.layer.add(pulseAnimation, forKey: "blobPulseAnimation")
     }
     
     func updatePeer(accountPeer: Peer, peer: Peer, hasOther: Bool) {
         if !arePeersEqual(self.peer, peer) {
             self.peer = peer
-            if let peerReference = PeerReference(peer), !peer.profileImageRepresentations.isEmpty {
-                let representations: [ImageRepresentationWithReference] = peer.profileImageRepresentations.map({ ImageRepresentationWithReference(representation: $0, reference: .avatar(peer: peerReference, resource: $0.resource)) })
-                self.imageNode.setSignal(chatAvatarGalleryPhoto(account: self.account, representations: representations, immediateThumbnailData: nil, autoFetchFullSize: true))
-                self.dimNode.isHidden = false
-            } else {
-                self.imageNode.setSignal(callDefaultBackground())
-                self.dimNode.isHidden = true
-            }
+            self.dimNode.isHidden = true
+            
+            self.avatarNode.setPeer(context: self.call.context, account: self.account, theme: self.presentationData.theme, peer: EnginePeer(peer), clipStyle: .round, synchronousLoad: true, displayDimensions: CGSize(width: avatarDimension, height: avatarDimension), storeUnrounded: true)
             
             self.toastNode.title = EnginePeer(peer).compactDisplayTitle
             self.statusNode.title = EnginePeer(peer).displayTitle(strings: self.presentationData.strings, displayOrder: self.presentationData.nameDisplayOrder)
@@ -845,6 +952,9 @@ final class CallControllerNode: ViewControllerTracingNode, CallControllerNodePro
         
         switch callState.remoteVideoState {
         case .active, .paused:
+            self.backButtonNode.isHidden = false
+            self.backButtonArrowNode.isHidden = false
+            
             if !self.incomingVideoViewRequested {
                 self.incomingVideoViewRequested = true
                 let delayUntilInitialized = true
@@ -853,7 +963,6 @@ final class CallControllerNode: ViewControllerTracingNode, CallControllerNodePro
                         return
                     }
                     if let incomingVideoView = incomingVideoView {
-                        incomingVideoView.view.backgroundColor = .black
                         incomingVideoView.view.clipsToBounds = true
                         
                         let applyNode: () -> Void = {
@@ -932,7 +1041,6 @@ final class CallControllerNode: ViewControllerTracingNode, CallControllerNodePro
                     }
                     
                     if let outgoingVideoView = outgoingVideoView {
-                        outgoingVideoView.view.backgroundColor = .black
                         outgoingVideoView.view.clipsToBounds = true
                         
                         let applyNode: () -> Void = {
@@ -1052,6 +1160,10 @@ final class CallControllerNode: ViewControllerTracingNode, CallControllerNodePro
                 }
             case .terminating:
                 statusValue = .text(string: self.presentationData.strings.Call_StatusEnded, displayLogo: false)
+            self.gradientNode.stopLoopingAnimation()
+            self.blobContainerNode.layer.removeAllAnimations()
+            self.hideWeakMessage()
+            
             case let .terminated(_, reason, _):
                 if let reason = reason {
                     switch reason {
@@ -1098,7 +1210,11 @@ final class CallControllerNode: ViewControllerTracingNode, CallControllerNodePro
                     text += "\n\(self.statusNode.subtitle)"
                 }
                 statusValue = .text(string: text, displayLogo: false)
+            
             case .active(let timestamp, let reception, let keyVisualHash), .reconnecting(let timestamp, let reception, let keyVisualHash):
+                self.backButtonNode.isHidden = false
+                self.backButtonArrowNode.isHidden = false
+            
                 let strings = self.presentationData.strings
                 var isReconnecting = false
                 if case .reconnecting = callState.state {
@@ -1113,7 +1229,11 @@ final class CallControllerNode: ViewControllerTracingNode, CallControllerNodePro
                     let keyTextSize = self.keyButtonNode.measure(CGSize(width: 200.0, height: 200.0))
                     self.keyButtonNode.frame = CGRect(origin: self.keyButtonNode.frame.origin, size: keyTextSize)
                     
-                    self.keyButtonNode.animateIn()
+                    self.animateToActiveStateTransition()
+                    
+                    if !self.isEncryptTooltipDidShow {
+                        self.showEncryptTooltipNode()
+                    }
                     
                     if let (layout, navigationBarHeight) = self.validLayout {
                         self.containerLayoutUpdated(layout, navigationBarHeight: navigationBarHeight, transition: .immediate)
@@ -1128,8 +1248,21 @@ final class CallControllerNode: ViewControllerTracingNode, CallControllerNodePro
                     }
                 }, timestamp)
                 if case .active = callState.state {
+                    let prevReception = self.statusNode.reception
+                    let isInitReception = prevReception == nil && reception == 0
                     statusReception = reception
+                    if !isInitReception, let reception = reception, reception <= 1 {
+                        self.gradientNode.updateColors(colors: weakGradientColors)
+                        self.showWeakMessage()
+                    } else {
+                        self.gradientNode.updateColors(colors: successGradientColors)
+                        self.hideWeakMessage()
+                    }
                 }
+            
+            if case .reconnecting = callState.state {
+                self.gradientNode.updateColors(colors: startGradientColors)
+            }
         }
         if self.shouldStayHiddenUntilConnection {
             switch callState.state {
@@ -1148,6 +1281,15 @@ final class CallControllerNode: ViewControllerTracingNode, CallControllerNodePro
                 break
             default:
                 self.isUIHidden = false
+            }
+        }
+        
+        if let callState = self.callState {
+            switch callState.state {
+            case .active:
+                break
+            default:
+                self.weakMessageNode.isHidden = true
             }
         }
         
@@ -1178,6 +1320,20 @@ final class CallControllerNode: ViewControllerTracingNode, CallControllerNodePro
         
         let hasIncomingVideoNode = self.incomingVideoNodeValue != nil && self.expandedVideoNode === self.incomingVideoNodeValue
         self.videoContainerNode.isPinchGestureEnabled = hasIncomingVideoNode
+    }
+    
+    private func animateToActiveStateTransition() {
+        self.blobContainerNode.layer.removeAllAnimations()
+        
+        self.keyButtonNode.animateIn()
+        
+        self.backButtonArrowNode.layer.animatePosition(from: CGPoint(x: self.backButtonArrowNode.frame.midX + 10, y: self.backButtonArrowNode.frame.midY), to: self.backButtonArrowNode.frame.center, duration: 0.5, timingFunction: kCAMediaTimingFunctionSpring)
+        self.backButtonArrowNode.layer.animateAlpha(from: 0.1, to: 1, duration: 0.5)
+        
+        self.backButtonNode.layer.animatePosition(from: CGPoint(x: self.backButtonNode.frame.midX + 20, y: self.backButtonNode.frame.midY), to: self.backButtonNode.frame.center, duration: 0.5, timingFunction: kCAMediaTimingFunctionSpring)
+        self.backButtonNode.layer.animateAlpha(from: 0.1, to: 1, duration: 0.5)
+        
+        self.blobContainerNode.layer.animateScale(from: 1, to: 1.3, duration: 0.3, timingFunction: kCAMediaTimingFunctionSpring)
     }
     
     private func updateToastContent() {
@@ -1236,7 +1392,10 @@ final class CallControllerNode: ViewControllerTracingNode, CallControllerNodePro
                 self.dimNode.image = image
             }
         }
-        self.statusNode.setVisible(visible || self.keyPreviewNode != nil, transition: transition)
+        let alpha = visible ? 1.0 : 0.0
+        self.statusNode.setVisible(visible, transition: .immediate)
+        ContainedViewLayoutTransition.immediate.updateAlpha(node: self.blobContainerNode, alpha: alpha)
+        ContainedViewLayoutTransition.immediate.updateAlpha(node: self.weakMessageNode, alpha: alpha)
     }
     
     private func maybeScheduleUIHidingForActiveVideoCall() {
@@ -1493,6 +1652,9 @@ final class CallControllerNode: ViewControllerTracingNode, CallControllerNodePro
         return containerPictureInPictureFrame
     }
     
+    private var statusNodeMinY: CGFloat = CGFloat()
+    private var statusNodeMinYWithVideo: CGFloat = CGFloat()
+    
     func containerLayoutUpdated(_ layout: ContainerViewLayout, navigationBarHeight: CGFloat, transition: ContainedViewLayoutTransition) {
         self.validLayout = (layout, navigationBarHeight)
         
@@ -1537,9 +1699,9 @@ final class CallControllerNode: ViewControllerTracingNode, CallControllerNodePro
         
         let toastHeight = self.toastNode.updateLayout(strings: self.presentationData.strings, content: self.toastContent, constrainedWidth: layout.size.width, bottomInset: layout.intrinsicInsets.bottom + buttonsHeight, transition: transition)
         
-        let toastSpacing: CGFloat = 22.0
+        let toastSpacing: CGFloat = 16.0
         let toastCollapsedOriginY = self.pictureInPictureTransitionFraction > 0.0 ? layout.size.height : layout.size.height - max(layout.intrinsicInsets.bottom, 20.0) - toastHeight
-        let toastOriginY = interpolate(from: toastCollapsedOriginY, to: defaultButtonsOriginY - toastSpacing - toastHeight, value: uiDisplayTransition)
+        let toastOriginY = interpolate(from: toastCollapsedOriginY, to: defaultButtonsOriginY + 140 - toastSpacing - toastHeight, value: uiDisplayTransition)
         
         var overlayAlpha: CGFloat = min(pinchTransitionAlpha, uiDisplayTransition)
         var toastAlpha: CGFloat = min(pinchTransitionAlpha, pipTransitionAlpha)
@@ -1574,6 +1736,12 @@ final class CallControllerNode: ViewControllerTracingNode, CallControllerNodePro
         }
         
         transition.updateFrame(node: self.imageNode, frame: containerFullScreenFrame)
+        
+        self.gradientNode.updateLayout(size: layout.size, transition: .immediate, extendAnimation: false, backwards: false, completion: {})
+        
+        let blobOrigin = CGPoint(x: Int(layout.size.width)/2 - blobDimension/2, y: avatarOffset + Int(layout.safeInsets.top) - (blobDimension - avatarDimension)/2)
+        self.blobContainerNode.frame = CGRect(origin: blobOrigin, size: blobSize)
+        
         let arguments = TransformImageArguments(corners: ImageCorners(), imageSize: CGSize(width: 640.0, height: 640.0).aspectFilled(layout.size), boundingSize: layout.size, intrinsicInsets: UIEdgeInsets())
         let apply = self.imageNode.asyncLayout()(arguments)
         apply()
@@ -1591,27 +1759,9 @@ final class CallControllerNode: ViewControllerTracingNode, CallControllerNodePro
         transition.updateAlpha(node: self.backButtonNode, alpha: overlayAlpha)
         transition.updateAlpha(node: self.toastNode, alpha: toastAlpha)
         
-        var statusOffset: CGFloat
-        if layout.metrics.widthClass == .regular && layout.metrics.heightClass == .regular {
-            if layout.size.height.isEqual(to: 1366.0) {
-                statusOffset = 160.0
-            } else {
-                statusOffset = 120.0
-            }
-        } else {
-            if layout.size.height.isEqual(to: 736.0) {
-                statusOffset = 80.0
-            } else if layout.size.width.isEqual(to: 320.0) {
-                statusOffset = 60.0
-            } else {
-                statusOffset = 64.0
-            }
-        }
-        
-        statusOffset += layout.safeInsets.top
-        
+        let statusY = CGFloat(avatarOffset + Int(layout.safeInsets.top) + avatarDimension + statusOffset)
         let statusHeight = self.statusNode.updateLayout(constrainedWidth: layout.size.width, transition: transition)
-        transition.updateFrame(node: self.statusNode, frame: CGRect(origin: CGPoint(x: 0.0, y: statusOffset), size: CGSize(width: layout.size.width, height: statusHeight)))
+        transition.updateFrame(node: self.statusNode, frame: CGRect(origin: CGPoint(x: 0.0, y: statusY), size: CGSize(width: layout.size.width, height: statusHeight)))
         transition.updateAlpha(node: self.statusNode, alpha: overlayAlpha)
         
         transition.updateFrame(node: self.toastNode, frame: CGRect(origin: CGPoint(x: 0.0, y: toastOriginY), size: CGSize(width: layout.size.width, height: toastHeight)))
@@ -1758,21 +1908,23 @@ final class CallControllerNode: ViewControllerTracingNode, CallControllerNodePro
     }
     
     @objc func keyPressed() {
-        if self.keyPreviewNode == nil, let keyText = self.keyTextData?.1, let peer = self.peer {
-            let keyPreviewNode = CallControllerKeyPreviewNode(keyText: keyText, infoText: self.presentationData.strings.Call_EmojiDescription(EnginePeer(peer).compactDisplayTitle).string.replacingOccurrences(of: "%%", with: "%"), dismiss: { [weak self] in
-                if let _ = self?.keyPreviewNode {
-                    self?.backPressed()
-                }
-            })
+        self.encryptTooltipNode?.isHidden = true
+        self.prepareEncryptPanelNode()
+        if self.keyPreviewNode == nil, let keyText = self.keyTextData?.1 {
+            let keyPreviewNode = EncryptKeyPreviewNode(accountContext: self.call.context, keyText: keyText)
             
             self.containerNode.insertSubnode(keyPreviewNode, belowSubnode: self.statusNode)
             self.keyPreviewNode = keyPreviewNode
             
             if let (validLayout, _) = self.validLayout {
                 keyPreviewNode.updateLayout(size: validLayout.size, transition: .immediate)
-                
+                keyPreviewNode.setTargetMinY(encryptPanelNodeTargetOrigin.y + 20)
+                if let encryptPanelNode = self.encryptPanelNode {
+                    self.containerNode.insertSubnode(keyPreviewNode, aboveSubnode: encryptPanelNode)
+                }
+            
                 self.keyButtonNode.isHidden = true
-                keyPreviewNode.animateIn(from: self.keyButtonNode.frame, fromNode: self.keyButtonNode)
+                self.performShowByPath(encryptPanelNode: self.encryptPanelNode)
             }
             
             self.updateDimVisibility()
@@ -1780,14 +1932,7 @@ final class CallControllerNode: ViewControllerTracingNode, CallControllerNodePro
     }
     
     @objc func backPressed() {
-        if let keyPreviewNode = self.keyPreviewNode {
-            self.keyPreviewNode = nil
-            keyPreviewNode.animateOut(to: self.keyButtonNode.frame, toNode: self.keyButtonNode, completion: { [weak self, weak keyPreviewNode] in
-                self?.keyButtonNode.isHidden = false
-                keyPreviewNode?.removeFromSupernode()
-            })
-            self.updateDimVisibility()
-        } else if self.hasVideoNodes {
+        if self.hasVideoNodes {
             if let (layout, navigationHeight) = self.validLayout {
                 self.pictureInPictureTransitionFraction = 1.0
                 self.containerLayoutUpdated(layout, navigationBarHeight: navigationHeight, transition: .animated(duration: 0.4, curve: .spring))
@@ -1817,8 +1962,6 @@ final class CallControllerNode: ViewControllerTracingNode, CallControllerNodePro
                     
                     self.containerLayoutUpdated(layout, navigationBarHeight: navigationHeight, transition: .animated(duration: 0.4, curve: .spring))
                 }
-            } else if let _ = self.keyPreviewNode {
-                self.backPressed()
             } else {
                 if self.hasVideoNodes {
                     let point = recognizer.location(in: recognizer.view)
@@ -2141,6 +2284,186 @@ final class CallControllerNode: ViewControllerTracingNode, CallControllerNodePro
             default:
                 break
         }
+    }
+    
+    private func showEncryptTooltipNode() {
+        if self.encryptTooltipNode == nil {
+            let paddingX: CGFloat = 16.0
+            let contentMaxWidth: Double = self.bounds.width*0.8 - paddingX*2
+            let contentMinHeight: Double = 20
+            let maxX = self.bounds.maxX - 15
+            let config = EncryptTooltipRectConfig(maxX: maxX, minY: self.keyButtonNode.frame.maxY, contentMaxWidth: contentMaxWidth, contentMinHeight: contentMinHeight, paddingX: paddingX)
+            let text = self.presentationData.strings.Call_EncryptionKey_Tooltip
+            let encryptTooltipNode = EncryptTooltipNode(config: config, text: text)
+            encryptTooltipNode.isHidden = true
+            self.encryptTooltipNode = encryptTooltipNode
+            self.containerNode.addSubnode(encryptTooltipNode)
+        }
+        
+        performShow(encryptTooltipNode: self.encryptTooltipNode)
+        self.isEncryptTooltipDidShow = true
+        UserDefaults.standard.set(true, forKey: "TG_callEncryptTooltip_didShow")
+    }
+    
+    func prepareEncryptPanelNode() {
+        if self.encryptPanelNode == nil {
+            let encryptPanelNode = EncryptPanelNode(origin: CGPoint(), nameText: "Emma's")
+            encryptPanelNode.isHidden = true
+            self.encryptPanelNode = encryptPanelNode
+            self.containerNode.addSubnode(encryptPanelNode)
+        }
+        if let peer = self.peer {
+            let peerTitle = EnginePeer(peer).compactDisplayTitle
+            self.encryptPanelNode?.updateNameText(peerTitle)
+        }
+        if let encryptPanelNode = self.encryptPanelNode {
+            self.encryptPanelNodeTargetOrigin = CGPoint(x: self.containerNode.frame.midX - encryptPanelNode.view.frame.width/2, y: self.blobContainerNode.frame.maxY - encryptPanelNode.view.frame.height - 27)
+        }
+        
+        encryptPanelNode?.onConformTouch { [weak self] panel in
+            guard let strongSelf = self else { return }
+            panel.isHidden = true
+            
+            let targetKeyTexNodeCenter = CGPoint(x: strongSelf.keyButtonNode.frame.midX + 2.0, y: strongSelf.keyButtonNode.frame.midY)
+            
+            strongSelf.blobContainerNode.transform = CATransform3DMakeScale(0.01, 0.01, 1)
+            let duration: Double = 0.5
+            let timingFunction = CAMediaTimingFunction(controlPoints: 0.3, 0.6, 0.8, 1)
+            CATransaction.begin()
+            CATransaction.setAnimationDuration(duration)
+            CATransaction.setAnimationTimingFunction(timingFunction)
+            CATransaction.setCompletionBlock { [weak self] in
+                guard let strongSelf = self else { return }
+                strongSelf.keyButtonNode.isHidden = false
+                strongSelf.keyPreviewNode?.keyTextNode.layer.position = targetKeyTexNodeCenter
+                strongSelf.keyPreviewNode?.isHidden = true
+                strongSelf.keyPreviewNode?.alpha = 0
+                strongSelf.keyPreviewNode?.keyTextNode.layer.removeAllAnimations()
+                strongSelf.keyPreviewNode?.removeFromSupernode()
+                strongSelf.keyPreviewNode = nil
+                strongSelf.blobContainerNode.isHidden = false
+                strongSelf.blobContainerNode.transform = CATransform3DMakeScale(1, 1, 1)
+            }
+            
+            if let keyTextNode = strongSelf.keyPreviewNode?.keyTextNode {
+                let rect = strongSelf.keyButtonNode.frame
+                keyTextNode.layer.animateScale(from: 1.0, to: rect.size.width / (keyTextNode.frame.size.width - 2.0), duration: 0, removeOnCompletion: false)
+                
+                let keyTextNodeAnimaton = CAKeyframeAnimation(keyPath: "position")
+                keyTextNodeAnimaton.path = CGPath.getRightCurvePath(startCenter: keyTextNode.layer.position, targetCenter: targetKeyTexNodeCenter)
+                keyTextNode.layer.add(keyTextNodeAnimaton, forKey: "position")
+            }
+            
+            UIView.animate(withDuration: 0.5, delay: 0, options: .curveEaseOut, animations: { [weak self] in
+                guard let strongSelf = self else { return }
+                strongSelf.blobContainerNode.isHidden = false
+                strongSelf.blobContainerNode.transform = CATransform3DMakeScale(1, 1, 1)
+            })
+            
+            CATransaction.commit()
+        }
+    }
+    
+    func performShow(encryptTooltipNode: EncryptTooltipNode?) {
+        guard let encryptTooltipNode = encryptTooltipNode else { return }
+        encryptTooltipNode.update(minY: self.keyButtonNode.frame.maxY + 6)
+        encryptTooltipNode.transform = CATransform3DMakeScale(0.01, 0.01, 1)
+        encryptTooltipNode.isHidden = true
+        encryptTooltipNode.alpha = 0
+        UIView.animate(withDuration: 0.3, delay: 0.3, options: .curveEaseOut, animations: {
+            encryptTooltipNode.isHidden = false
+            encryptTooltipNode.alpha = 1
+            encryptTooltipNode.transform = CATransform3DMakeScale(1, 1, 1)
+        }, completion: { finished in
+            guard finished else { return }
+            UIView.animate(withDuration: 0.5, delay: 2, animations: {
+                encryptTooltipNode.transform = CATransform3DMakeScale(0.01, 0.01, 1)
+            }, completion: {_ in
+                encryptTooltipNode.isHidden = true
+                encryptTooltipNode.transform = CATransform3DMakeScale(1, 1, 1)
+            })
+        })
+    }
+    
+    func performShowByPath(encryptPanelNode: EncryptPanelNode?) {
+        guard let encryptPanelNode = encryptPanelNode else { return }
+        
+        let startPanelCenter = self.keyButtonNode.view.center
+        let targetPanelCenter = CGPoint(x: self.encryptPanelNodeTargetOrigin.x + encryptPanelNode.bounds.width/2, y: self.encryptPanelNodeTargetOrigin.y + encryptPanelNode.bounds.height/2)
+        
+        encryptPanelNode.isHidden = true
+        encryptPanelNode.alpha = 0
+        encryptPanelNode.view.center = targetPanelCenter
+        encryptPanelNode.transform = CATransform3DMakeScale(0.01, 0.01, 1)
+        
+        self.blobContainerNode.layer.removeAllAnimations()
+        self.blobContainerNode.transform = CATransform3DMakeScale(1, 1, 1)
+        
+        let duration: Double = 0.5
+        let timingFunction = CAMediaTimingFunction(controlPoints: 0.3, 0.6, 0.8, 1)
+        CATransaction.begin()
+        CATransaction.setAnimationDuration(duration)
+        CATransaction.setAnimationTimingFunction(timingFunction)
+        CATransaction.setCompletionBlock { [weak self] in
+            guard let self = self else { return }
+            encryptPanelNode.view.center = targetPanelCenter
+            encryptPanelNode.isHidden = false
+            encryptPanelNode.alpha = 1
+            encryptPanelNode.transform = CATransform3DMakeScale(1, 1, 1)
+            encryptPanelNode.layer.removeAllAnimations()
+            
+            self.blobContainerNode.isHidden = true
+        }
+        
+        self.keyPreviewNode?.animateIn(from: self.keyButtonNode.frame, fromNode: self.keyButtonNode)
+                
+        UIView.animate(withDuration: duration, delay: 0, animations: { [weak self] in
+            guard let strongSelf = self else { return }
+            encryptPanelNode.isHidden = false
+            encryptPanelNode.alpha = 1
+            encryptPanelNode.transform = CATransform3DMakeScale(1, 1, 1)
+         
+            strongSelf.blobContainerNode.transform = CATransform3DMakeScale(0.01, 0.01, 1)
+        })
+
+        let positionPanelAnimaton = CAKeyframeAnimation(keyPath: "position")
+        positionPanelAnimaton.path = CGPath.getRightCurvePath(startCenter: startPanelCenter, targetCenter: targetPanelCenter)
+        encryptPanelNode.layer.add(positionPanelAnimaton, forKey: "position")
+        
+        CATransaction.commit()
+    }
+    
+    private func showWeakMessage() {
+        guard self.weakMessageNode.isHidden else { return }
+        let origin = CGPoint(x: self.containerNode.frame.midX - self.weakMessageNode.bounds.width/2, y: self.statusNode.frame.maxY + 12)
+        weakMessageNode.updateOrigin(origin: origin)
+        weakMessageNode.transform = CATransform3DMakeScale(0.01, 0.01, 1)
+        weakMessageNode.isHidden = true
+        weakMessageNode.alpha = 0
+        UIView.animate(withDuration: 0.3, delay: 0, options: .curveEaseOut, animations: { [weak self] in
+            guard let self = self else { return }
+            self.weakMessageNode.isHidden = false
+            self.weakMessageNode.transform = CATransform3DMakeScale(1, 1, 1)
+            self.weakMessageNode.alpha = 1
+        }, completion: { [weak self] finished in
+            guard finished, let self = self else { return }
+            self.weakMessageNode.isHidden = false
+            self.weakMessageNode.transform = CATransform3DMakeScale(1, 1, 1)
+            self.weakMessageNode.alpha = 1
+        })
+    }
+    
+    private func hideWeakMessage() {
+        guard !self.weakMessageNode.isHidden else { return }
+        UIView.animate(withDuration: 0.3, delay: 0, options: .curveEaseOut, animations: { [weak self] in
+            guard let self = self else { return }
+            self.weakMessageNode.transform = CATransform3DMakeScale(0.01, 0.01, 1)
+            self.weakMessageNode.alpha = 0
+        }, completion: { [weak self] finished in
+            guard finished, let self = self else { return }
+            self.weakMessageNode.isHidden = true
+            self.weakMessageNode.transform = CATransform3DMakeScale(1, 1, 1)
+        })
     }
     
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {

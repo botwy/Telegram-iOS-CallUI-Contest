@@ -78,7 +78,7 @@ final class CallControllerButtonItemNode: HighlightTrackingButtonNode {
     private(set) var currentContent: Content?
     private(set) var currentText: String = ""
     
-    init(largeButtonSize: CGFloat = 72.0) {
+    init(largeButtonSize: CGFloat = 56.0) {
         self.largeButtonSize = largeButtonSize
         
         self.wrapperNode = ASDisplayNode()
@@ -92,6 +92,10 @@ final class CallControllerButtonItemNode: HighlightTrackingButtonNode {
         
         self.contentBackgroundNode = ASImageNode()
         self.contentBackgroundNode.isUserInteractionEnabled = false
+        self.contentBackgroundNode.layer.backgroundColor = UIColor(red: 1, green: 1, blue: 1, alpha: 0.25).cgColor
+        self.contentBackgroundNode.layer.compositingFilter = "overlayBlendMode"
+        self.contentBackgroundNode.layer.cornerRadius = self.largeButtonSize / 2.0
+        self.contentBackgroundNode.clipsToBounds = true
         
         self.contentNode = ASImageNode()
         self.contentNode.isUserInteractionEnabled = false
@@ -112,7 +116,7 @@ final class CallControllerButtonItemNode: HighlightTrackingButtonNode {
         
         self.wrapperNode.addSubnode(self.textNode)
         
-        self.contentContainer.view.addSubview(self.effectView)
+       // self.contentContainer.view.addSubview(self.effectView)
         self.contentContainer.addSubnode(self.contentBackgroundNode)
         self.contentContainer.addSubnode(self.contentNode)
         self.contentContainer.addSubnode(self.overlayHighlightNode)

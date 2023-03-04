@@ -221,6 +221,8 @@ public final class GradientBackgroundNode: ASDisplayNode {
         }
     }
 
+    private var isLoopingAnimation = false
+    
     private static let basePositions: [CGPoint] = [
         CGPoint(x: 0.80, y: 0.10),
         CGPoint(x: 0.60, y: 0.20),
@@ -566,5 +568,28 @@ public final class GradientBackgroundNode: ASDisplayNode {
         } else {
             completion()
         }
+    }
+    
+    private func loopingAnimation(transition: ContainedViewLayoutTransition, extendAnimation: Bool = false, backwards: Bool = false, completion: @escaping (() -> Void) = {}) {
+        guard case let .animated(duration, _) = transition, duration > 0.001 else {
+            return
+        }
+        self.animateEvent(transition: transition, extendAnimation: extendAnimation, backwards: backwards, completion: {[weak self] in
+            guard let strongSelf = self else { return }
+            if strongSelf.isLoopingAnimation {
+                strongSelf.loopingAnimation(transition: transition, extendAnimation: extendAnimation, backwards: backwards, completion: completion)
+            } else {
+                completion()
+            }
+        })
+    }
+    
+    public func startLoopingAnimation(completion: @escaping (() -> Void) = {}) {
+        self.isLoopingAnimation = true
+        self.loopingAnimation(transition: .animated(duration: 0.5, curve: .linear), completion: completion)
+    }
+    
+    public func stopLoopingAnimation() {
+        self.isLoopingAnimation = false
     }
 }

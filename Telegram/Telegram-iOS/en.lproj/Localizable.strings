@@ -2272,6 +2272,8 @@ Unused sets are archived when you add more.";
 "AccessDenied.CallMicrophone" = "Telegram needs access to your microphone for voice calls.\n\nPlease go to Settings > Privacy > Microphone and set Telegram to ON.";
 
 "Call.EncryptionKey.Title" = "Encryption Key";
+"Call.EncryptionKey.Tooltip" = "Encryption key of this call";
+"Call.Weak.Signal" = "Weak network signal";
 
 "Application.Name" = "Telegram";
 "DialogList.Pin" = "Pin";

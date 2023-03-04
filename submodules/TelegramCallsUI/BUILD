@@ -53,6 +53,13 @@ swift_library(
         ":TelegramCallsUIBundle",
     ],
     deps = [
+        "//submodules/AnimatedStickerNode:AnimatedStickerNode",
+       "//submodules/TelegramAnimatedStickerNode:TelegramAnimatedStickerNode",
+       "//submodules/AccountContext:AccountContext",
+       "//submodules/TelegramCore:TelegramCore",
+       "//submodules/MediaResources:MediaResources",
+      "//submodules/AvatarNode:AvatarNode",
+      "//submodules/GradientBackground:GradientBackground",
     	"//submodules/SSignalKit/SwiftSignalKit:SwiftSignalKit",
         "//submodules/Display:Display",
         "//submodules/TelegramPresentationData:TelegramPresentationData",

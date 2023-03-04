@@ -48,6 +48,7 @@ final class LegacyCallControllerNode: ASDisplayNode, CallControllerNodeProtocol 
             self.buttonsNode.isMuted = self.isMuted
         }
     }
+    var audioLevel: Float = 0
     
     private var shouldStayHiddenUntilConnection: Bool = false
     

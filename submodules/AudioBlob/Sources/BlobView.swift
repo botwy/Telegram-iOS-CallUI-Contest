@@ -26,8 +26,8 @@ public final class VoiceBlobNode: ASDisplayNode {
         (self.view as? VoiceBlobView)?.stopAnimating(duration: duration)
     }
     
-    public func setColor(_ color: UIColor, animated: Bool = false) {
-        (self.view as? VoiceBlobView)?.setColor(color, animated: animated)
+    public func setColor(_ color: UIColor, animated: Bool = false, mediumAlpha: CGFloat = 0.3, bigAlpha: CGFloat = 0.15) {
+        (self.view as? VoiceBlobView)?.setColor(color, animated: animated, mediumAlpha: mediumAlpha, bigAlpha: bigAlpha)
     }
     
     public func updateLevel(_ level: CGFloat, immediately: Bool = false) {
@@ -137,13 +137,13 @@ public final class VoiceBlobView: UIView, TGModernConversationInputMicButtonDeco
         self.setColor(color, animated: false)
     }
     
-    public func setColor(_ color: UIColor, animated: Bool) {
+    public func setColor(_ color: UIColor, animated: Bool, mediumAlpha: CGFloat = 0.3, bigAlpha: CGFloat = 0.15) {
         if let isManuallyInHierarchy = self.isManuallyInHierarchy, !isManuallyInHierarchy {
             return
         }
         smallBlob.setColor(color, animated: animated)
-        mediumBlob.setColor(color.withAlphaComponent(0.3), animated: animated)
-        bigBlob.setColor(color.withAlphaComponent(0.15), animated: animated)
+        mediumBlob.setColor(color.withAlphaComponent(mediumAlpha), animated: animated)
+        bigBlob.setColor(color.withAlphaComponent(bigAlpha), animated: animated)
     }
     
     public func updateLevel(_ level: CGFloat) {
